@@ -1,0 +1,13 @@
+# Project place file
+/RBLX-Tank-Blast.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+sourcemap.json
+.vscode
+# Local verification tools and build artifacts
+.tools/
+__pycache__/
+*.pyc

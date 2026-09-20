@@ -1,0 +1,156 @@
+name: Deploy Tank Blast
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ['v0.05']
+
+concurrency:
+  group: tank-blast-published-place
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.policy.outputs.allowed }}
+      commit: ${{ steps.policy.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - id: policy
+        run: python .github/scripts/deployment_gate.py
+  verify:
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          persist-credentials: false
+      - name: Check deployment policy without publishing
+        run: python tests/test-deployment-policy.py
+      - name: Check module boundaries and modular level architecture
+        run: |
+          python tests/test-module-boundaries.py
+          python tests/test-modular-levels.py
+      - uses: CompeyDev/setup-rokit@v0.1.2
+        with:
+          version: v1.2.0
+      - name: Install pinned Luau test runner
+        run: |
+          mkdir -p .tools/luau
+          curl --fail --location --retry 3 https://github.com/luau-lang/luau/releases/download/0.737/luau-ubuntu.zip -o .tools/luau.zip
+          unzip -q .tools/luau.zip -d .tools/luau
+          chmod +x .tools/luau/luau .tools/luau/luau-compile
+      - name: Compile gameplay and engine test scripts
+        run: find src tests/studio -name '*.luau' -print0 | xargs -0 .tools/luau/luau-compile --null
+      - name: Run Phase 2 combat regressions
+        shell: pwsh
+        run: ./tests/run-projectile-tests.ps1
+      - name: Run Phase 3 registry, camera and lifecycle regressions
+        shell: pwsh
+        run: ./tests/run-phase3-tests.ps1
+      - name: Run Phase 4 tank and enemy regressions
+        shell: pwsh
+        run: ./tests/run-phase4-tests.ps1
+      - name: Run Phase 5 world and boss regressions
+        run: python tests/run-tests.py phase5-world phase5-lifecycle
+      - name: Build gameplay and isolated engine-test places
+        run: |
+          rojo build default.project.json --output .tools/TankBlast.rbxlx
+          rojo build phase2-tests.project.json --output .tools/TankBlastTests.rbxlx
+          rojo build phase3-tests.project.json --output .tools/TankBlastLevelTests.rbxlx
+          rojo build phase4-tests.project.json --output .tools/TankBlastEnemyTests.rbxlx
+          rojo build phase5-tests.project.json --output .tools/TankBlastWorldTests.rbxlx
+  deploy:
+    needs: [gate, verify]
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          persist-credentials: false
+
+      - name: Setup Roblox toolchain
+        uses: CompeyDev/setup-rokit@v0.1.2
+        with:
+          version: v1.2.0
+
+      - name: Build Tank Blast with Rojo
+        run: rojo build default.project.json --output TankBlast.rbxlx
+
+      - name: Verify Roblox target
+        env:
+          ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}
+          ROBLOX_UNIVERSE_ID: ${{ secrets.ROBLOX_UNIVERSE_ID }}
+          ROBLOX_PLACE_ID: ${{ secrets.ROBLOX_PLACE_ID }}
+        shell: bash
+        run: |
+          test -n "$ROBLOX_API_KEY" || { echo "ROBLOX_API_KEY secret is missing"; exit 1; }
+          test -n "$ROBLOX_UNIVERSE_ID" || { echo "ROBLOX_UNIVERSE_ID secret is missing"; exit 1; }
+          test -n "$ROBLOX_PLACE_ID" || { echo "ROBLOX_PLACE_ID secret is missing"; exit 1; }
+
+          HTTP_CODE=$(curl --silent --show-error \
+            --output place-response.json \
+            --write-out "%{http_code}" \
+            --request GET \
+            --header "x-api-key: $ROBLOX_API_KEY" \
+            "https://apis.roblox.com/cloud/v2/universes/$ROBLOX_UNIVERSE_ID/places/$ROBLOX_PLACE_ID")
+
+          echo "Target verification response: HTTP $HTTP_CODE"
+          if [[ "$HTTP_CODE" -lt 200 || "$HTTP_CODE" -ge 300 ]]; then
+            cat place-response.json || true
+            exit 1
+          fi
+
+      - name: Publish Tank Blast
+        env:
+          ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}
+          ROBLOX_UNIVERSE_ID: ${{ secrets.ROBLOX_UNIVERSE_ID }}
+          ROBLOX_PLACE_ID: ${{ secrets.ROBLOX_PLACE_ID }}
+        shell: bash
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if [[ "$attempt" -gt 1 ]]; then
+              delay=$(( (attempt - 1) * 30 ))
+              echo "Waiting ${delay}s before publish attempt $attempt..."
+              sleep "$delay"
+            fi
+
+            HTTP_CODE=$(curl --silent --show-error \
+              --output publish-response.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "x-api-key: $ROBLOX_API_KEY" \
+              --header "Content-Type: application/xml" \
+              --data-binary @TankBlast.rbxlx \
+              "https://apis.roblox.com/universes/v1/$ROBLOX_UNIVERSE_ID/places/$ROBLOX_PLACE_ID/versions?versionType=Published")
+
+            echo "Publish attempt $attempt: HTTP $HTTP_CODE"
+            cat publish-response.json || true
+            echo
+
+            if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+              echo "Tank Blast Rojo build published successfully."
+              exit 0
+            fi
+
+            if [[ "$HTTP_CODE" != "409" && "$HTTP_CODE" != "429" && ! "$HTTP_CODE" =~ ^5 ]]; then
+              echo "Non-retryable Roblox publishing error."
+              exit 1
+            fi
+          done
+
+          echo "Roblox publishing failed after 5 attempts."
+          exit 1
