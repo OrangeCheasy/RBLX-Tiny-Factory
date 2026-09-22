@@ -15,8 +15,8 @@ function GameService.start()
 	started = true
 	FactoryService.start()
 	EconomyService.start()
-	AnalyticsService.start()
 	DataService.start()
+	AnalyticsService.start()
 end
 
 return GameService
