@@ -30,18 +30,25 @@ function DebugHudController.start()
 	local player = Players.LocalPlayer
 	local playerGui = player:WaitForChild("PlayerGui")
 	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "DebugHud"
+	screenGui.Name = "TinyFactoryHud"
 	screenGui.ResetOnSpawn = false
 	screenGui.Parent = playerGui
 
 	local title = createLabel(screenGui, "Title", UDim2.fromOffset(16, 16))
-	title.Text = "Tiny Factory — v1.00"
+	title.Text = `Tiny Factory — {player:GetAttribute("FactoryBuildVersion") or "v1.00"}`
 	local coins = createLabel(screenGui, "Coins", UDim2.fromOffset(16, 50))
 	local activeItems = createLabel(screenGui, "ActiveItems", UDim2.fromOffset(16, 84))
 	local production = createLabel(screenGui, "Production", UDim2.fromOffset(16, 118))
 	local sold = createLabel(screenGui, "Sold", UDim2.fromOffset(16, 152))
 	local capacity = createLabel(screenGui, "Capacity", UDim2.fromOffset(16, 186))
 	local dataStatus = createLabel(screenGui, "DataStatus", UDim2.fromOffset(16, 220))
+	local guide = createLabel(screenGui, "Guide", UDim2.fromOffset(16, 254))
+	guide.Size = UDim2.fromOffset(260, 44)
+	guide.BackgroundColor3 = Color3.fromRGB(42, 62, 49)
+	guide.TextColor3 = Color3.fromRGB(255, 224, 140)
+	guide.TextSize = 13
+	guide.TextWrapped = true
+	guide.TextYAlignment = Enum.TextYAlignment.Center
 
 	local function refresh()
 		coins.Text = `Coins: {player:GetAttribute("FactoryCoins") or 0}`
@@ -58,6 +65,19 @@ function DebugHudController.start()
 		else
 			dataStatus.Text = "Save: loading"
 		end
+
+		local rolls = player:GetAttribute("Analytics_MachineRolled") or 0
+		local placements = player:GetAttribute("Analytics_MachinePlaced") or 0
+		local sales = player:GetAttribute("Analytics_MachineSold") or 0
+		if rolls == 0 then
+			guide.Text = "Start here: roll a machine, then open Build factory to place it."
+		elseif placements == 0 then
+			guide.Text = "Next: select your new machine in Build factory and choose an open slot."
+		elseif sales == 0 then
+			guide.Text = "Keep going: let the route run, then sell an extra machine from inventory."
+		else
+			guide.Text = "Core loop: roll, place, produce, sell, and expand your factory."
+		end
 	end
 
 	for _, attributeName in ipairs({
@@ -69,6 +89,10 @@ function DebugHudController.start()
 		"FactoryDataLoaded",
 		"FactoryDataLocked",
 		"FactoryDataError",
+		"FactoryBuildVersion",
+		"Analytics_MachineRolled",
+		"Analytics_MachinePlaced",
+		"Analytics_MachineSold",
 	}) do
 		player:GetAttributeChangedSignal(attributeName):Connect(refresh)
 	end
@@ -80,6 +104,8 @@ function DebugHudController.start()
 				label.Size = UDim2.fromOffset(if compact then 190 else 260, 26)
 				label.TextSize = if compact then 14 else 16
 			end
+			guide.Size = UDim2.fromOffset(if compact then 190 else 260, if compact then 52 else 44)
+			guide.TextSize = if compact then 12 else 13
 		end
 		camera:GetPropertyChangedSignal("ViewportSize"):Connect(layout)
 		layout()
