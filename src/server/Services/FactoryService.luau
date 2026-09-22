@@ -362,6 +362,7 @@ local function createRemotes()
 	remoteFunction("PlaceMachine").OnServerInvoke = placeMachine
 	remoteFunction("RemoveMachine").OnServerInvoke = removeMachine
 	remoteFunction("MoveMachine").OnServerInvoke = moveMachine
+	remoteFunction("GetFactoryState").OnServerInvoke = FactoryService.getClientState
 end
 
 function FactoryService.getSimulation(player: Player): any?
@@ -371,6 +372,20 @@ end
 
 function FactoryService.getState(player: Player): any?
 	return factories[player]
+end
+
+function FactoryService.getClientState(player: Player): { [string]: any }
+	local factory = factories[player]
+	if not factory then
+		return { Success = false, Reason = "Factory is not ready" }
+	end
+	return {
+		Success = true,
+		Layout = layoutForClient(factory.layout),
+		Inventory = copyInventory(factory.inventory),
+		Capacity = factory.capacity,
+		SlotCount = FactoryLayout.SlotCount,
+	}
 end
 
 function FactoryService.setCapacity(player: Player, capacity: number): (boolean, string?)
