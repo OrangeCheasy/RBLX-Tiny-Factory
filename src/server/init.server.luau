@@ -2,9 +2,9 @@
 
 local Players = game:GetService("Players")
 
--- Tank Blast uses the tank as the player's avatar. Set this before any service
--- work so Roblox cannot race a default character spawn against TankService.
-Players.CharacterAutoLoads = false
+-- Tiny Factory does not replace the player's avatar. Keep default character
+-- loading enabled while the factory runtime initializes independently.
+Players.CharacterAutoLoads = true
 
 local GameService = require(script.Services.GameService)
 
