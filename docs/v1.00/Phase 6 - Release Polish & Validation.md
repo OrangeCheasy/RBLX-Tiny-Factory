@@ -3,6 +3,9 @@
 ## Objective
 Polish only what is necessary to make the core loop understandable, satisfying, measurable, and public-test ready.
 
+## Implementation Status
+The release pass now includes a production-named HUD, build-version labeling, first-minute onboarding cues driven by real roll/place/sell events, mobile-sized touch controls, bounded machine visuals, and CI coverage for every cumulative v0 checkpoint. Roblox Studio launch, reconnect, multiplayer, and device profiling remain manual acceptance checks.
+
 ## Player-Facing Result
 - First minute is clear.
 - Machine interactions feel satisfying.
@@ -98,4 +101,4 @@ All previous v1 phases.
 - Any feature not required to answer the v1 validation question.
 
 ## Completion Definition
-v1.00 is releasable when technical exit criteria pass, manual launch tests are complete, and the build is capable of generating trustworthy product-validation data.
+v1.00 is technically complete when Phases 1–6 pass the automated suite and release checks. Public release still requires the listed Roblox Studio manual launch tests to be run against the published place.
