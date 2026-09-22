@@ -1,0 +1,467 @@
+--!strict
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local FactoryConfig = require(Shared:WaitForChild("FactoryConfig"))
+local FactoryLayout = require(Shared:WaitForChild("FactoryLayout"))
+local FactorySimulation = require(Shared:WaitForChild("FactorySimulation"))
+local MachineDefinitions = require(Shared:WaitForChild("MachineDefinitions"))
+local PlacementRules = require(Shared:WaitForChild("PlacementRules"))
+local AnalyticsService = require(script.Parent.AnalyticsService)
+
+local FactoryService = {}
+local factories = {}
+local lastRequestAt = {}
+local started = false
+local nextPlotIndex = 0
+local attributeUpdateAccumulator = 0
+
+local function copyInventory(inventory: { [string]: number }): { [string]: number }
+	local result = {}
+	for machineId, quantity in pairs(inventory) do
+		result[machineId] = quantity
+	end
+	return result
+end
+
+local function layoutForClient(layout: FactoryLayout.Layout): { string }
+	local result = {}
+	for slotIndex = 1, FactoryLayout.SlotCount do
+		result[slotIndex] = layout[slotIndex] or ""
+	end
+	return result
+end
+
+local function createPart(parent: Instance, name: string, size: Vector3, position: Vector3, color: Color3): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Anchored = true
+	part.CanCollide = false
+	part.Size = size
+	part.Position = position
+	part.Color = color
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Parent = parent
+	return part
+end
+
+local function createPlaceholderPlot(player: Player): (Folder, Vector3)
+	local plotsFolder = workspace:FindFirstChild("TinyFactoryPlots")
+	if not plotsFolder then
+		plotsFolder = Instance.new("Folder")
+		plotsFolder.Name = "TinyFactoryPlots"
+		plotsFolder.Parent = workspace
+	end
+
+	nextPlotIndex += 1
+	local origin = Vector3.new((nextPlotIndex - 1) * 36, 0, 0)
+	local plot = Instance.new("Folder")
+	plot.Name = `Factory_{player.UserId}`
+	plot:SetAttribute("OwnerUserId", player.UserId)
+	plot.Parent = plotsFolder
+
+	createPart(plot, "PlotBase", Vector3.new(30, 0.5, 8), origin + Vector3.new(12, -0.25, 0), Color3.fromRGB(73, 55, 42))
+	for slotIndex = 0, FactoryLayout.SlotCount - 1 do
+		createPart(plot, `Path_{slotIndex + 1}`, Vector3.new(5.5, 0.15, 2), origin + Vector3.new(slotIndex * 6, 0.1, 0), Color3.fromRGB(104, 104, 104))
+	end
+	return plot, origin
+end
+
+local function updateDebugAttributes(player: Player, factory: any)
+	local snapshot = factory.simulation:getSnapshot()
+	player:SetAttribute("FactoryCoins", snapshot.Coins)
+	player:SetAttribute("FactoryActiveItems", snapshot.ActiveItems)
+	player:SetAttribute("FactoryProducedItems", snapshot.ProducedItems)
+	player:SetAttribute("FactorySoldItems", snapshot.SoldItems)
+	player:SetAttribute("FactoryTotalValueSold", snapshot.TotalValueSold)
+	player:SetAttribute("FactoryDroppedItemsAtCap", snapshot.DroppedItemsAtCap)
+	player:SetAttribute("FactoryCapacity", factory.capacity)
+	player:SetAttribute("FactoryLayout", table.concat(layoutForClient(factory.layout), ","))
+end
+
+local function refreshMachineVisuals(factory: any)
+	local machineFolder = factory.plot:FindFirstChild("Machines")
+	if machineFolder then
+		machineFolder:Destroy()
+	end
+	machineFolder = Instance.new("Folder")
+	machineFolder.Name = "Machines"
+	machineFolder.Parent = factory.plot
+
+	local colors = {
+		Producer = Color3.fromRGB(82, 145, 255),
+		Processor = Color3.fromRGB(255, 194, 66),
+		Seller = Color3.fromRGB(83, 207, 113),
+	}
+	for slotIndex = 1, FactoryLayout.SlotCount do
+		local machineId = factory.layout[slotIndex]
+		if machineId then
+			local definition = MachineDefinitions.get(machineId)
+			if definition then
+				createPart(
+					machineFolder,
+					`Slot_{slotIndex}_{machineId}`,
+					Vector3.new(2, 2, 2),
+					factory.origin + Vector3.new((slotIndex - 1) * 6, 1.1, 0),
+					colors[definition.Category] or Color3.fromRGB(235, 235, 235)
+				)
+			end
+		end
+	end
+end
+
+local function updateVisualItems(factory: any)
+	local activeItems = factory.simulation:getActiveItemsForDebug()
+	local snapshot = factory.simulation:getSnapshot()
+	local activeById = {}
+	for _, item in ipairs(activeItems) do
+		activeById[item.Id] = true
+		local visual = factory.visualItems[item.Id]
+		if not visual then
+			visual = createPart(factory.plot, `Item_{item.Id}`, Vector3.new(0.9, 0.9, 0.9), factory.origin + Vector3.new(0, 1, 0), Color3.fromRGB(235, 235, 235))
+			factory.visualItems[item.Id] = visual
+		end
+		local stateColors = {
+			Base = Color3.fromRGB(235, 235, 235),
+			Painted = Color3.fromRGB(255, 105, 160),
+			Golden = Color3.fromRGB(255, 211, 66),
+		}
+		local size = 0.9 * math.clamp(item.SizeScale or 1, 0.5, 4)
+		visual.Size = Vector3.new(size, size, size)
+		visual.Color = stateColors[item.VisualState] or stateColors.Base
+
+		local routeMachineId = snapshot.Route[item.SlotIndex]
+		local visualSlotIndex = 1
+		for slotIndex = 1, FactoryLayout.SlotCount do
+			if factory.layout[slotIndex] == routeMachineId then
+				visualSlotIndex = slotIndex
+				break
+			end
+		end
+		local progress = 1 - math.clamp(item.TimeRemaining / FactoryConfig.TravelTimePerSlotSeconds, 0, 1)
+		local x = (visualSlotIndex - 1) * 6 + progress * 6
+		visual.Position = factory.origin + Vector3.new(x, 1.05, 0)
+		visual:SetAttribute("ItemValue", item.Value)
+	end
+
+	for itemId, visual in pairs(factory.visualItems) do
+		if not activeById[itemId] then
+			visual:Destroy()
+			factory.visualItems[itemId] = nil
+		end
+	end
+end
+
+local function buildResponse(factory: any, success: boolean, reason: string?): { [string]: any }
+	return {
+		Success = success,
+		Reason = reason,
+		Layout = layoutForClient(factory.layout),
+		Inventory = copyInventory(factory.inventory),
+	}
+end
+
+local function isRateLimited(player: Player): boolean
+	local now = os.clock()
+	local previous = lastRequestAt[player] or 0
+	if now - previous < 0.1 then
+		return true
+	end
+	lastRequestAt[player] = now
+	return false
+end
+
+local function commitLayout(factory: any, layout: FactoryLayout.Layout): (boolean, string?)
+	local valid, errorMessage = PlacementRules.validateLayout(layout, factory.capacity)
+	if not valid then
+		return false, errorMessage
+	end
+	local route = FactoryLayout.toRoute(layout)
+	local success, routeError = pcall(function()
+		factory.simulation:setRoute(route)
+	end)
+	if not success then
+		return false, tostring(routeError)
+	end
+	factory.layout = FactoryLayout.copy(layout)
+	refreshMachineVisuals(factory)
+	return true
+end
+
+local function placeMachine(player: Player, machineId: any, slotIndex: any, replaceRequested: any)
+	local factory = factories[player]
+	if not factory then
+		return { Success = false, Reason = "Factory is not ready" }
+	end
+	if isRateLimited(player) then
+		return buildResponse(factory, false, "Too many requests")
+	end
+	local valid, errorMessage = PlacementRules.validateMachineForSlot(machineId, slotIndex)
+	if not valid then
+		return buildResponse(factory, false, errorMessage)
+	end
+	local previousMachineId = factory.layout[slotIndex]
+	if previousMachineId and replaceRequested ~= true then
+		return buildResponse(factory, false, "Slot is occupied")
+	end
+	if previousMachineId and slotIndex == FactoryLayout.SlotCount then
+		return buildResponse(factory, false, "The seller is fixed infrastructure")
+	end
+	if (factory.inventory[machineId] or 0) <= 0 then
+		return buildResponse(factory, false, "Machine is not in inventory")
+	end
+
+	factory.inventory[machineId] -= 1
+	factory.layout[slotIndex] = machineId
+	if previousMachineId then
+		factory.inventory[previousMachineId] = (factory.inventory[previousMachineId] or 0) + 1
+	end
+	local committed, commitError = commitLayout(factory, factory.layout)
+	if not committed then
+		factory.inventory[machineId] += 1
+		if previousMachineId then
+			factory.inventory[previousMachineId] -= 1
+		end
+		factory.layout[slotIndex] = previousMachineId
+		return buildResponse(factory, false, commitError)
+	end
+	AnalyticsService.record(player, "MachinePlaced")
+	return buildResponse(factory, true)
+end
+
+local function removeMachine(player: Player, slotIndex: any)
+	local factory = factories[player]
+	if not factory then
+		return { Success = false, Reason = "Factory is not ready" }
+	end
+	if isRateLimited(player) then
+		return buildResponse(factory, false, "Too many requests")
+	end
+	local valid, errorMessage = PlacementRules.validateSlotIndex(slotIndex)
+	if not valid then
+		return buildResponse(factory, false, errorMessage)
+	end
+	if slotIndex == 1 or slotIndex == FactoryLayout.SlotCount then
+		return buildResponse(factory, false, "The producer and seller are required")
+	end
+	local machineId = factory.layout[slotIndex]
+	if not machineId then
+		return buildResponse(factory, false, "Slot is already empty")
+	end
+
+	factory.layout[slotIndex] = nil
+	factory.inventory[machineId] = (factory.inventory[machineId] or 0) + 1
+	local committed, commitError = commitLayout(factory, factory.layout)
+	if not committed then
+		factory.inventory[machineId] -= 1
+		factory.layout[slotIndex] = machineId
+		return buildResponse(factory, false, commitError)
+	end
+	AnalyticsService.record(player, "MachineRemoved")
+	return buildResponse(factory, true)
+end
+
+local function moveMachine(player: Player, sourceSlotIndex: any, destinationSlotIndex: any)
+	local factory = factories[player]
+	if not factory then
+		return { Success = false, Reason = "Factory is not ready" }
+	end
+	if isRateLimited(player) then
+		return buildResponse(factory, false, "Too many requests")
+	end
+	local sourceValid, sourceError = PlacementRules.validateSlotIndex(sourceSlotIndex)
+	local destinationValid, destinationError = PlacementRules.validateSlotIndex(destinationSlotIndex)
+	if not sourceValid then
+		return buildResponse(factory, false, sourceError)
+	end
+	if not destinationValid then
+		return buildResponse(factory, false, destinationError)
+	end
+	local machineId = factory.layout[sourceSlotIndex]
+	if not machineId then
+		return buildResponse(factory, false, "Source slot is empty")
+	end
+	if factory.layout[destinationSlotIndex] then
+		return buildResponse(factory, false, "Destination slot is occupied")
+	end
+	local machineValid, machineError = PlacementRules.validateMachineForSlot(machineId, destinationSlotIndex)
+	if not machineValid then
+		return buildResponse(factory, false, machineError)
+	end
+
+	factory.layout[sourceSlotIndex] = nil
+	factory.layout[destinationSlotIndex] = machineId
+	local committed, commitError = commitLayout(factory, factory.layout)
+	if not committed then
+		factory.layout[destinationSlotIndex] = nil
+		factory.layout[sourceSlotIndex] = machineId
+		return buildResponse(factory, false, commitError)
+	end
+	AnalyticsService.record(player, "MachineMoved")
+	return buildResponse(factory, true)
+end
+
+local function createFactory(player: Player)
+	if factories[player] then
+		return
+	end
+	local simulation = FactorySimulation.new({ Route = FactoryLayout.toRoute(FactoryLayout.Default) })
+	local plot, origin = createPlaceholderPlot(player)
+	local factory = {
+		simulation = simulation,
+		plot = plot,
+		origin = origin,
+		layout = FactoryLayout.copy(FactoryLayout.Default),
+		capacity = 1,
+		inventory = {},
+		visualItems = {},
+	}
+	factories[player] = factory
+	refreshMachineVisuals(factory)
+	updateDebugAttributes(player, factory)
+	AnalyticsService.record(player, "FactoryActive")
+end
+
+local function removeFactory(player: Player)
+	local factory = factories[player]
+	if factory then
+		factory.plot:Destroy()
+		factories[player] = nil
+	end
+	lastRequestAt[player] = nil
+end
+
+local function createRemotes()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remotes then
+		remotes = Instance.new("Folder")
+		remotes.Name = "Remotes"
+		remotes.Parent = ReplicatedStorage
+	end
+	local factoryRemotes = remotes:FindFirstChild("Factory")
+	if not factoryRemotes then
+		factoryRemotes = Instance.new("Folder")
+		factoryRemotes.Name = "Factory"
+		factoryRemotes.Parent = remotes
+	end
+
+	local function remoteFunction(name: string): RemoteFunction
+		local remote = factoryRemotes:FindFirstChild(name) :: RemoteFunction?
+		if not remote then
+			remote = Instance.new("RemoteFunction")
+			remote.Name = name
+			remote.Parent = factoryRemotes
+		end
+		return remote
+	end
+
+	remoteFunction("PlaceMachine").OnServerInvoke = placeMachine
+	remoteFunction("RemoveMachine").OnServerInvoke = removeMachine
+	remoteFunction("MoveMachine").OnServerInvoke = moveMachine
+end
+
+function FactoryService.getSimulation(player: Player): any?
+	local factory = factories[player]
+	return factory and factory.simulation
+end
+
+function FactoryService.getState(player: Player): any?
+	return factories[player]
+end
+
+function FactoryService.setCapacity(player: Player, capacity: number): (boolean, string?)
+	local factory = factories[player]
+	if not factory then
+		return false, "Factory is not ready"
+	end
+	if capacity < factory.capacity or capacity > FactoryConfig.MaxFactoryCapacity then
+		return false, "Invalid capacity change"
+	end
+	factory.capacity = capacity
+	updateDebugAttributes(player, factory)
+	return true
+end
+
+function FactoryService.getPersistentState(player: Player): { [string]: any }?
+	local factory = factories[player]
+	if not factory then
+		return nil
+	end
+	return {
+		Coins = factory.simulation:getSnapshot().Coins,
+		Layout = FactoryLayout.copy(factory.layout),
+		Inventory = copyInventory(factory.inventory),
+		Capacity = factory.capacity,
+		Statistics = (function()
+			local snapshot = factory.simulation:getSnapshot()
+			return {
+				ProducedItems = snapshot.ProducedItems,
+				SoldItems = snapshot.SoldItems,
+				TotalValueSold = snapshot.TotalValueSold,
+				DroppedItemsAtCap = snapshot.DroppedItemsAtCap,
+			}
+		end)(),
+	}
+end
+
+function FactoryService.applyPersistentState(player: Player, data: { [string]: any }): (boolean, string?)
+	local factory = factories[player]
+	if not factory then
+		return false, "Factory is not ready"
+	end
+	local valid, errorMessage = PlacementRules.validateLayout(data.Layout, data.Capacity)
+	if not valid then
+		return false, errorMessage
+	end
+	local route = FactoryLayout.toRoute(data.Layout)
+	local routeApplied, routeError = pcall(function()
+		factory.simulation:setRoute(route)
+	end)
+	if not routeApplied then
+		return false, tostring(routeError)
+	end
+	factory.capacity = data.Capacity
+	factory.layout = FactoryLayout.copy(data.Layout)
+	factory.inventory = copyInventory(data.Inventory)
+	factory.simulation:setCoins(data.Coins)
+	refreshMachineVisuals(factory)
+	updateDebugAttributes(player, factory)
+	return true
+end
+
+function FactoryService.start()
+	if started then
+		return
+	end
+	started = true
+	createRemotes()
+	Players.PlayerAdded:Connect(createFactory)
+	Players.PlayerRemoving:Connect(function(player)
+		-- DataService saves on the same signal. Deferring teardown lets its
+		-- handler read the final factory state before the plot is destroyed.
+		task.defer(removeFactory, player)
+	end)
+	for _, player in Players:GetPlayers() do
+		createFactory(player)
+	end
+
+	RunService.Heartbeat:Connect(function(deltaTime)
+		attributeUpdateAccumulator += deltaTime
+		for player, factory in pairs(factories) do
+			factory.simulation:step(deltaTime)
+			updateVisualItems(factory)
+			if attributeUpdateAccumulator >= 0.25 then
+				updateDebugAttributes(player, factory)
+			end
+		end
+		if attributeUpdateAccumulator >= 0.25 then
+			attributeUpdateAccumulator = 0
+		end
+	end)
+end
+
+return FactoryService
