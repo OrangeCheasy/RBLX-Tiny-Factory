@@ -342,6 +342,7 @@ local function createFactory(player: Player)
 	if factories[player] then
 		return
 	end
+	player:SetAttribute("FactoryBuildVersion", FactoryConfig.BuildVersion)
 	local simulation = FactorySimulation.new({ Route = FactoryLayout.toRoute(FactoryLayout.Default) })
 	local plot, origin = createPlaceholderPlot(player)
 	local factory = {
