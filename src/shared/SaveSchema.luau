@@ -24,6 +24,7 @@ local function defaultData(): { [string]: any }
 		Capacity = 1,
 		RollCount = 0,
 		Statistics = {},
+		Analytics = {},
 	}
 end
 
@@ -84,13 +85,19 @@ function SaveSchema.sanitize(raw: any): { [string]: any }
 		end
 	end
 
-	if type(source.Statistics) == "table" then
-		for statistic, value in pairs(source.Statistics) do
-			if type(statistic) == "string" and type(value) == "number" and value >= 0 and value % 1 == 0 then
-				safe.Statistics[statistic] = math.min(value, 1_000_000)
+	local function sanitizeCounters(sourceCounters: any, destination: { [string]: number })
+		if type(sourceCounters) ~= "table" then
+			return
+		end
+		for statistic, value in pairs(sourceCounters) do
+			if type(statistic) == "string" and statistic:match("^[%a_][%w_]*$") and #statistic <= 48 and type(value) == "number" and value >= 0 and value % 1 == 0 then
+				destination[statistic] = math.min(value, 1_000_000)
 			end
 		end
 	end
+
+	sanitizeCounters(source.Statistics, safe.Statistics)
+	sanitizeCounters(source.Analytics, safe.Analytics)
 
 	return safe
 end

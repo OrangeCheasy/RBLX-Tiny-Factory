@@ -10,6 +10,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local SaveSchema = require(Shared:WaitForChild("SaveSchema"))
 local FactoryService = require(script.Parent.FactoryService)
 local EconomyService = require(script.Parent.EconomyService)
+local AnalyticsService = require(script.Parent.AnalyticsService)
 
 local DataService = {}
 local store = DataStoreService:GetDataStore("TinyFactory_PlayerData_v1")
@@ -80,6 +81,7 @@ local function loadPlayer(player: Player)
 	if not success then
 		sessionIds[player] = nil
 		setLoadStatus(player, false, false, "Data store unavailable")
+		AnalyticsService.record(player, "DataLoadFailure")
 		warn(`Tiny Factory data load failed for {player.UserId}: {storedValue}`)
 		return
 	end
@@ -96,9 +98,11 @@ local function loadPlayer(player: Player)
 	if not factoryApplied or not economyApplied then
 		sessionIds[player] = nil
 		setLoadStatus(player, false, false, factoryError or economyError or "Invalid saved data")
+		AnalyticsService.record(player, "DataLoadFailure")
 		warn(`Tiny Factory data apply failed for {player.UserId}: {factoryError or economyError}`)
 		return
 	end
+	AnalyticsService.restore(player, safeData.Analytics)
 	loadedPlayers[player] = true
 	setLoadStatus(player, true, false, nil)
 end
@@ -121,6 +125,7 @@ local function savePlayer(player: Player, releaseLock: boolean?)
 		Capacity = factoryData.Capacity,
 		RollCount = economyData.RollCount,
 		Statistics = factoryData.Statistics,
+		Analytics = AnalyticsService.snapshot(player),
 	})
 	local conflict = false
 	local now = os.time()
@@ -140,6 +145,7 @@ local function savePlayer(player: Player, releaseLock: boolean?)
 	end)
 	if not success or conflict or result == nil then
 		player:SetAttribute("FactoryDataSaveError", if conflict then "Session ownership changed" else "Data store unavailable")
+		AnalyticsService.record(player, "DataSaveFailure")
 		if not success then
 			warn(`Tiny Factory data save failed for {player.UserId}: {result}`)
 		end
