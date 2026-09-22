@@ -287,7 +287,7 @@ function BuildController.start()
 	local function layout(viewportWidth: number)
 		compact = viewportWidth < 600
 		panel.Size = if compact then UDim2.fromOffset(304, 360) else UDim2.fromOffset(360, 380)
-		panel.Position = if compact then UDim2.fromOffset(8, 154) else UDim2.fromOffset(16, 188)
+		panel.Position = if compact then UDim2.fromOffset(8, 202) else UDim2.fromOffset(16, 188)
 		title.Position = UDim2.fromOffset(8, 8)
 		title.Size = UDim2.new(1, -16, 0, 28)
 		status.Position = UDim2.fromOffset(8, 38)

@@ -3,21 +3,42 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local MachineDefinitions = require(Shared:WaitForChild("MachineDefinitions"))
+
 local EconomyController = {}
 local started = false
 
-local function createButton(parent: Instance, name: string, text: string, position: UDim2): TextButton
+local COLORS = {
+	Panel = Color3.fromRGB(28, 24, 21),
+	Button = Color3.fromRGB(46, 39, 34),
+	Selected = Color3.fromRGB(112, 77, 34),
+	Good = Color3.fromRGB(140, 235, 150),
+	Bad = Color3.fromRGB(255, 150, 120),
+	Text = Color3.fromRGB(255, 255, 255),
+	Accent = Color3.fromRGB(255, 194, 66),
+}
+
+local function createButton(parent: Instance, name: string, text: string): TextButton
 	local button = Instance.new("TextButton")
 	button.Name = name
 	button.Text = text
-	button.Position = position
-	button.Size = UDim2.fromOffset(190, 34)
-	button.BackgroundColor3 = Color3.fromRGB(46, 39, 34)
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.BackgroundColor3 = COLORS.Button
+	button.TextColor3 = COLORS.Text
 	button.Font = Enum.Font.Gotham
-	button.TextSize = 14
+	button.TextSize = 12
+	button.TextWrapped = true
+	button.AutoButtonColor = true
 	button.Parent = parent
 	return button
+end
+
+local function clearDynamicChildren(parent: Instance)
+	for _, child in ipairs(parent:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
 end
 
 function EconomyController.start()
@@ -41,49 +62,163 @@ function EconomyController.start()
 
 	local panel = Instance.new("Frame")
 	panel.Name = "EconomyPanel"
-	panel.Position = UDim2.new(1, -236, 0, 16)
-	panel.Size = UDim2.fromOffset(220, 250)
-	panel.BackgroundColor3 = Color3.fromRGB(28, 24, 21)
-	panel.BackgroundTransparency = 0.1
+	panel.BackgroundColor3 = COLORS.Panel
+	panel.BackgroundTransparency = 0.08
 	panel.BorderSizePixel = 0
 	panel.Parent = screenGui
 
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.fromOffset(220, 30)
 	title.BackgroundTransparency = 1
 	title.Text = "Factory economy"
-	title.TextColor3 = Color3.fromRGB(255, 194, 66)
+	title.TextColor3 = COLORS.Accent
 	title.Font = Enum.Font.GothamBold
 	title.TextSize = 17
 	title.Parent = panel
 
 	local status = Instance.new("TextLabel")
-	status.Position = UDim2.fromOffset(8, 34)
-	status.Size = UDim2.fromOffset(204, 32)
 	status.BackgroundTransparency = 1
-	status.TextColor3 = Color3.fromRGB(255, 255, 255)
+	status.TextColor3 = COLORS.Text
 	status.TextWrapped = true
 	status.Font = Enum.Font.Gotham
 	status.TextSize = 12
 	status.Parent = panel
 
-	local roll = createButton(panel, "Roll", "Roll machine", UDim2.fromOffset(15, 72))
-	local capacity = createButton(panel, "Capacity", "Buy capacity", UDim2.fromOffset(15, 112))
-	local sell = createButton(panel, "Sell", "Sell multiplier", UDim2.fromOffset(15, 152))
+	local result = Instance.new("TextLabel")
+	result.BackgroundTransparency = 1
+	result.TextColor3 = COLORS.Accent
+	result.TextWrapped = true
+	result.Font = Enum.Font.GothamBold
+	result.TextSize = 13
+	result.Parent = panel
+
+	local roll = createButton(panel, "Roll", "Roll machine")
+	local capacity = createButton(panel, "Capacity", "Buy capacity")
+
+	local inventoryTitle = Instance.new("TextLabel")
+	inventoryTitle.BackgroundTransparency = 1
+	inventoryTitle.Text = "Inventory — tap an item to sell one"
+	inventoryTitle.TextColor3 = COLORS.Text
+	inventoryTitle.Font = Enum.Font.GothamBold
+	inventoryTitle.TextSize = 11
+	inventoryTitle.TextXAlignment = Enum.TextXAlignment.Left
+	inventoryTitle.Parent = panel
+
+	local inventoryList = Instance.new("ScrollingFrame")
+	inventoryList.Name = "InventoryList"
+	inventoryList.BackgroundTransparency = 1
+	inventoryList.BorderSizePixel = 0
+	inventoryList.ScrollBarThickness = 5
+	inventoryList.CanvasSize = UDim2.fromScale(0, 0)
+	inventoryList.Parent = panel
+	local inventoryLayout = Instance.new("UIListLayout")
+	inventoryLayout.Padding = UDim.new(0, 3)
+	inventoryLayout.Parent = inventoryList
+
+	local state: any = nil
+	local compact = false
+
+	local function setStatus(message: string, good: boolean?)
+		status.Text = message
+		status.TextColor3 = if good == true then COLORS.Good elseif good == false then COLORS.Bad else COLORS.Text
+	end
+
+	local function invoke(remote: RemoteFunction, ...: any): any
+		local arguments = { ... }
+		local success, response = pcall(function()
+			return remote:InvokeServer(table.unpack(arguments))
+		end)
+		if not success then
+			setStatus("Server request failed. Try again.", false)
+			return nil
+		end
+		return response
+	end
+
+	local render: () -> ()
+	local function refresh(responseOverride: any)
+		local response = responseOverride or invoke(getState)
+		if response and response.Success then
+			state = response
+			render()
+		else
+			setStatus(response and response.Reason or "Economy is loading", false)
+		end
+	end
+
+	render = function()
+		if not state then
+			return
+		end
+		status.Text = `Coins: {state.Coins}  |  Roll: {state.RollCost or "MAX"}  |  Capacity: {state.Capacity}/{state.MaxCapacity}`
+		clearDynamicChildren(inventoryList)
+		local count = 0
+		for machineId, quantity in pairs(state.Inventory or {}) do
+			if quantity > 0 then
+				count += 1
+				local definition = MachineDefinitions.get(machineId)
+				local button = createButton(inventoryList, `Sell_{machineId}`, `Sell {definition and definition.DisplayName or machineId} ×{quantity}`)
+				button.Size = UDim2.new(1, -6, 0, if compact then 28 else 32)
+				button.TextXAlignment = Enum.TextXAlignment.Left
+				button.Activated:Connect(function()
+					local response = invoke(sellMachine, machineId, 1)
+					if response and response.Success then
+						setStatus(`Sold one {definition and definition.DisplayName or machineId}.`, true)
+						refresh(response)
+					end
+				end)
+			end
+		end
+		if count == 0 then
+			local empty = Instance.new("TextLabel")
+			empty.BackgroundTransparency = 1
+			empty.Text = "Inventory is empty. Roll a machine to get another choice."
+			empty.TextColor3 = Color3.fromRGB(190, 180, 170)
+			empty.Font = Enum.Font.Gotham
+			empty.TextSize = 11
+			empty.TextWrapped = true
+			empty.Size = UDim2.new(1, -6, 0, 28)
+			empty.Parent = inventoryList
+		end
+		inventoryList.CanvasSize = UDim2.fromOffset(0, inventoryLayout.AbsoluteContentSize.Y)
+	end
+
+	roll.Activated:Connect(function()
+		local response = invoke(rollMachine)
+		if response and response.Success then
+			local definition = response.LastRoll and MachineDefinitions.get(response.LastRoll)
+			result.Text = `Rolled: {definition and definition.DisplayName or response.LastRoll or "Machine"} ({response.LastRarity or "Unknown"})`
+			setStatus("Machine added to inventory.", true)
+			refresh(response)
+		end
+	end)
+
+	capacity.Activated:Connect(function()
+		local response = invoke(buyCapacity)
+		if response and response.Success then
+			setStatus(`Capacity expanded to {response.Capacity}.`, true)
+			refresh(response)
+		end
+	end)
 
 	local function layout(viewportWidth: number)
-		local compact = viewportWidth < 600
-		panel.Size = if compact then UDim2.fromOffset(196, 180) else UDim2.fromOffset(220, 250)
-		panel.Position = if compact then UDim2.fromOffset(8, 372) else UDim2.new(1, -236, 0, 16)
-		title.Size = UDim2.new(1, 0, 0, 30)
-		status.Size = UDim2.new(1, -16, 0, 32)
-		local buttonWidth = if compact then 166 else 190
-		local buttonHeight = if compact then 28 else 34
-		local firstY = if compact then 68 else 72
-		for index, button in ipairs({ roll, capacity, sell }) do
-			button.Size = UDim2.fromOffset(buttonWidth, buttonHeight)
-			button.Position = UDim2.fromOffset(15, firstY + (index - 1) * (buttonHeight + 6))
-		end
+		compact = viewportWidth < 600
+		panel.Size = if compact then UDim2.fromOffset(304, 194) else UDim2.fromOffset(300, 350)
+		panel.Position = if compact then UDim2.fromOffset(8, 8) else UDim2.new(1, -316, 0, 16)
+		title.Position = UDim2.fromOffset(8, 8)
+		title.Size = UDim2.new(1, -16, 0, 26)
+		status.Position = UDim2.fromOffset(8, 36)
+		status.Size = UDim2.new(1, -16, 0, 24)
+		result.Position = UDim2.fromOffset(8, 62)
+		result.Size = UDim2.new(1, -16, 0, 24)
+		roll.Position = UDim2.fromOffset(8, 90)
+		capacity.Position = if compact then UDim2.fromOffset(158, 90) else UDim2.fromOffset(8, 130)
+		roll.Size = if compact then UDim2.fromOffset(142, 30) else UDim2.fromOffset(284, 34)
+		capacity.Size = if compact then UDim2.fromOffset(138, 30) else UDim2.fromOffset(284, 34)
+		inventoryTitle.Position = UDim2.fromOffset(8, if compact then 124 else 174)
+		inventoryTitle.Size = UDim2.new(1, -16, 0, 18)
+		inventoryList.Position = UDim2.fromOffset(8, if compact then 142 else 196)
+		inventoryList.Size = UDim2.new(1, -16, 0, if compact then 48 else 142)
+		render()
 	end
 
 	local camera = workspace.CurrentCamera
@@ -92,34 +227,11 @@ function EconomyController.start()
 			layout(camera.ViewportSize.X)
 		end)
 		layout(camera.ViewportSize.X)
+	else
+		layout(1000)
 	end
-
-	local function showResponse(response: any)
-		if response and response.Success then
-			status.TextColor3 = Color3.fromRGB(140, 235, 150)
-			local inventory = response.Inventory or {}
-			status.Text = `Coins {response.Coins or 0} | Capacity {response.Capacity or 0} | Multiplier {inventory.ValueMultiplier or 0}`
-		else
-			status.TextColor3 = Color3.fromRGB(255, 150, 120)
-			status.Text = response and response.Reason or "Request failed"
-		end
-	end
-
-	local function refresh()
-		showResponse(getState:InvokeServer())
-	end
-
-	roll.Activated:Connect(function()
-		showResponse(rollMachine:InvokeServer())
-	end)
-	capacity.Activated:Connect(function()
-		showResponse(buyCapacity:InvokeServer())
-	end)
-	sell.Activated:Connect(function()
-		showResponse(sellMachine:InvokeServer("ValueMultiplier", 1))
-	end)
-
-	refresh()
+	setStatus("Production funds rolls and capacity upgrades.", nil)
+	refresh(nil)
 end
 
 return EconomyController
