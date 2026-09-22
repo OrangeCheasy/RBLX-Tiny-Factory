@@ -2,13 +2,25 @@
 
 ## Project status
 
-Tiny Factory is a Roblox incremental/factory game. `main` contains the original
-scaffold and `v0.01` is the first permanent historical/version branch. The
-local implementation now contains the complete Phase 1–6 v1 candidate; the
-next release checkpoint is local `v1.00` after the required branch promotion.
-Automated validation is complete. Roblox Studio manual validation and remote
-GitHub synchronization remain release handoff steps when credentials and a
-testable Roblox target are available.
+Tiny Factory is a Roblox incremental/factory game. `main` contains the
+integrated release, and `v0.01` through `v0.06` are permanent cumulative phase
+checkpoints. The local implementation contains the complete Phase 1–6 v1
+candidate. Automated validation is complete. Roblox Studio manual validation
+and remote GitHub synchronization are release handoff steps when credentials
+and a testable Roblox target are available.
+
+### Cumulative phase checkpoints
+
+| Branch | Included work |
+| --- | --- |
+| `v0.01` | Existing permanent Phase 1/v1 foundation baseline |
+| `v0.02` | Phase 2 building and placement workflow |
+| `v0.03` | Phase 3 rolling, inventory, resale, and economy presentation |
+| `v0.04` | Phase 4 readable launch machines and feedback |
+| `v0.05` | Phase 5 persistence, analytics, and runtime hardening |
+| `v0.06` | Phase 6 onboarding, release polish, and checkpoint CI coverage |
+
+`v1.00` is the release candidate assembled from the completed v0 checkpoints.
 
 The product question for `v1.00` is:
 
@@ -30,8 +42,8 @@ The major branches are permanent checkpoints. Only `main` and branches named
 `vX.XX` are major branches.
 
 1. Audit the repository, branch, requirements, and existing validation state.
-2. Start from the intended major branch. The current foundation major branch is
-   `v0.01`; it was created from the repository's `main` scaffold.
+2. Start from the intended major branch. For new work, use the latest completed
+   checkpoint, currently `v0.06`; `v0.01` remains the historical foundation.
 3. Create a descriptive temporary/minor branch for every change. Never develop
    directly on `main` or a `vX.XX` branch.
 4. Implement one coherent change set on the temporary branch.
@@ -261,11 +273,21 @@ branch may publish directly.
 
 ## Definition of done for v1.00
 
-v1.00 is complete only after Phases 1–6 have been implemented and reviewed, the
-automated suite passes, manual desktop/mobile/reconnect/multiplayer/performance
-validation is complete, analytics answer the validation questions, and the
-deployment workflow is verified from `main`. A green compile alone is not a
-v1.00 release.
+The Phase 1–6 implementation is complete when all phase tests, compilation,
+Rojo build, release checks, and code review pass. A public `v1.00` release still
+requires the following Roblox Studio acceptance checks on the published place:
+
+- [ ] New-player no-explanation first-minute test.
+- [ ] Desktop full loop: roll, place, produce, sell, and expand.
+- [ ] Mobile full loop with safe touch targets and readable labels.
+- [ ] Reconnect and session-lock behavior.
+- [ ] Multiplayer plot isolation.
+- [ ] Prolonged idle production and worst-case machine chain.
+- [ ] Audio/visual readability and performance on the target devices.
+- [ ] Analytics events and build label are visible in the intended review path.
+- [ ] Deployment verification and publish run from `main` only.
+
+Automated validation is not a substitute for these engine/manual checks.
 
 ## Change checklist
 

@@ -97,18 +97,51 @@ local function refreshMachineVisuals(factory: any)
 		Processor = Color3.fromRGB(255, 194, 66),
 		Seller = Color3.fromRGB(83, 207, 113),
 	}
+	local shapes = {
+		Producer = Enum.PartType.Cylinder,
+		Processor = Enum.PartType.Block,
+		Seller = Enum.PartType.Ball,
+	}
 	for slotIndex = 1, FactoryLayout.SlotCount do
 		local machineId = factory.layout[slotIndex]
 		if machineId then
 			local definition = MachineDefinitions.get(machineId)
 			if definition then
-				createPart(
+				local machinePart = createPart(
 					machineFolder,
 					`Slot_{slotIndex}_{machineId}`,
 					Vector3.new(2, 2, 2),
 					factory.origin + Vector3.new((slotIndex - 1) * 6, 1.1, 0),
 					colors[definition.Category] or Color3.fromRGB(235, 235, 235)
 				)
+				machinePart.Shape = shapes[definition.Category] or Enum.PartType.Block
+				machinePart.Material = if definition.Rarity == "Legendary" or definition.Rarity == "Epic" then Enum.Material.Neon else Enum.Material.SmoothPlastic
+				machinePart:SetAttribute("MachineId", definition.Id)
+				machinePart:SetAttribute("DisplayName", definition.DisplayName)
+				machinePart:SetAttribute("Description", definition.Description)
+				machinePart:SetAttribute("Rarity", definition.Rarity)
+				machinePart:SetAttribute("Behavior", definition.Behavior or "Infrastructure")
+
+				local labelGui = Instance.new("BillboardGui")
+				labelGui.Name = "MachineLabel"
+				labelGui.Adornee = machinePart
+				labelGui.AlwaysOnTop = true
+				labelGui.MaxDistance = 80
+				labelGui.Size = UDim2.fromOffset(150, 42)
+				labelGui.StudsOffset = Vector3.new(0, 1.7, 0)
+				labelGui.Parent = machinePart
+
+				local label = Instance.new("TextLabel")
+				label.BackgroundColor3 = Color3.fromRGB(28, 24, 21)
+				label.BackgroundTransparency = 0.2
+				label.BorderSizePixel = 0
+				label.Size = UDim2.fromScale(1, 1)
+				label.Text = `{definition.DisplayName}\n{definition.Rarity}`
+				label.TextColor3 = Color3.fromRGB(255, 255, 255)
+				label.TextSize = 11
+				label.TextWrapped = true
+				label.Font = Enum.Font.GothamBold
+				label.Parent = labelGui
 			end
 		end
 	end
@@ -309,6 +342,7 @@ local function createFactory(player: Player)
 	if factories[player] then
 		return
 	end
+	player:SetAttribute("FactoryBuildVersion", FactoryConfig.BuildVersion)
 	local simulation = FactorySimulation.new({ Route = FactoryLayout.toRoute(FactoryLayout.Default) })
 	local plot, origin = createPlaceholderPlot(player)
 	local factory = {
@@ -362,6 +396,7 @@ local function createRemotes()
 	remoteFunction("PlaceMachine").OnServerInvoke = placeMachine
 	remoteFunction("RemoveMachine").OnServerInvoke = removeMachine
 	remoteFunction("MoveMachine").OnServerInvoke = moveMachine
+	remoteFunction("GetFactoryState").OnServerInvoke = FactoryService.getClientState
 end
 
 function FactoryService.getSimulation(player: Player): any?
@@ -371,6 +406,20 @@ end
 
 function FactoryService.getState(player: Player): any?
 	return factories[player]
+end
+
+function FactoryService.getClientState(player: Player): { [string]: any }
+	local factory = factories[player]
+	if not factory then
+		return { Success = false, Reason = "Factory is not ready" }
+	end
+	return {
+		Success = true,
+		Layout = layoutForClient(factory.layout),
+		Inventory = copyInventory(factory.inventory),
+		Capacity = factory.capacity,
+		SlotCount = FactoryLayout.SlotCount,
+	}
 end
 
 function FactoryService.setCapacity(player: Player, capacity: number): (boolean, string?)

@@ -69,6 +69,8 @@ local function getClientState(player: Player): { [string]: any }
 		RollCount = profile.RollCount,
 		RollCost = rollCost,
 		CapacityCost = capacityCost,
+		LastRoll = player:GetAttribute("FactoryLastRoll"),
+		LastRarity = player:GetAttribute("FactoryLastRarity"),
 	}
 end
 

@@ -11,6 +11,7 @@ end
 local defaultData = SaveSchema.default()
 expect(defaultData.SchemaVersion == SaveSchema.CurrentVersion, "default data must use the current schema")
 expect(defaultData.Capacity == 1, "default capacity should be one")
+expect(type(defaultData.Analytics) == "table", "default data must include bounded analytics storage")
 expect(defaultData.Layout[1] == FactoryLayout.Default[1], "default producer must be persisted")
 expect(defaultData.Layout[5] == FactoryLayout.Default[5], "default seller must be persisted")
 
@@ -29,6 +30,11 @@ local safe = SaveSchema.sanitize({
 		Negative = -1,
 		TooLarge = 9_999_999_999,
 	},
+	Analytics = {
+		MachinePlaced = 3,
+		["invalid-event"] = 5,
+		TooLarge = 9_999_999_999,
+	},
 })
 expect(safe.Coins == FactoryConfig.MaxItemValue, "coins must be capped during sanitization")
 expect(safe.Capacity == FactoryConfig.MaxFactoryCapacity, "capacity must be capped during sanitization")
@@ -40,6 +46,9 @@ expect(safe.Layout[2] == "Giantifier", "valid processor layout should survive sa
 expect(safe.Statistics.ProducedItems == 12, "valid statistics should survive sanitization")
 expect(safe.Statistics.Negative == nil, "negative statistics must be removed")
 expect(safe.Statistics.TooLarge == 1_000_000, "statistics must be capped")
+expect(safe.Analytics.MachinePlaced == 3, "valid analytics counters should survive sanitization")
+expect(safe.Analytics["invalid-event"] == nil, "analytics event names must be schema-safe")
+expect(safe.Analytics.TooLarge == 1_000_000, "analytics counters must be capped")
 
 local invalidLayout = SaveSchema.sanitize({
 	Layout = { "ValueMultiplier", nil, nil, nil, "Seller" },
