@@ -120,12 +120,21 @@ jobs:
             --arg creator "$creator_json" \
             '{assetType:"Model", displayName:"Tiny Factory - Personal Island", description:"Higgsfield Tiny Factory personal island, revision 26.", creationContext:{creator:($creator | fromjson)}}')
 
-          operation=$(curl --fail --silent --show-error \
+          upload_response_file=$(mktemp)
+          upload_http_code=$(curl --silent --show-error \
+            --output "$upload_response_file" \
+            --write-out "%{http_code}" \
             --request POST \
             --header "x-api-key: $ROBLOX_API_KEY" \
-            --form-string "request=$request_json" \
+            --form "request=$request_json;type=application/json" \
             --form "fileContent=@src/maps/PersonalIsland.glb;type=model/gltf-binary" \
             "https://apis.roblox.com/assets/v1/assets")
+          echo "Roblox asset upload HTTP $upload_http_code"
+          if [[ "$upload_http_code" -lt 200 || "$upload_http_code" -ge 300 ]]; then
+            cat "$upload_response_file"
+            exit 1
+          fi
+          operation=$(cat "$upload_response_file")
           operation_path=$(jq -r '.path // empty' <<<"$operation")
           test -n "$operation_path" || { echo "Roblox asset upload did not return an operation path"; exit 1; }
 
