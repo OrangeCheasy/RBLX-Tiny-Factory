@@ -6,7 +6,7 @@
   "downloadUrl": "https://d2ol7oe51mr4n9.cloudfront.net/user_3JIaQn7fHPsfa846N6bqqlay6AY/754e703e-cae9-4000-be87-404c4fad3d0e.glb",
   "expectedBytes": 4407452,
   "sourceEtag": "a25926c99bcaad87d4abd06ac976f83f",
-  "repositoryPath": "src/maps/PersonalIsland.glb",
+  "repositoryPath": "docs/assets/PersonalIsland.glb",
   "robloxAssetType": "Model",
   "importPolicy": "main-only GitHub Actions import and publish"
 }
