@@ -90,7 +90,6 @@ jobs:
         run: |
           set -euo pipefail
           source_url=$(jq -r '.downloadUrl' docs/assets/personal-island-source.json)
-          expected_bytes=$(jq -r '.expectedBytes' docs/assets/personal-island-source.json)
           map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
           mkdir -p "$(dirname "$map_path")"
           curl --fail --location --retry 3 --silent --show-error "$source_url" \
