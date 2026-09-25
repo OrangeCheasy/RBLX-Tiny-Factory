@@ -55,7 +55,9 @@ jobs:
           done
 
   import_personal_island:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'push'
     name: Import Higgsfield GLB and Roblox Model
     runs-on: ubuntu-latest
     steps:
