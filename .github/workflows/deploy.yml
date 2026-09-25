@@ -144,6 +144,7 @@ jobs:
           test -n "$creator_type" || { echo "Could not resolve the Roblox universe creator type"; exit 1; }
           test -n "$creator_id" || { echo "Could not resolve the Roblox universe creator ID"; exit 1; }
           [[ "$creator_id" =~ ^[0-9]+$ ]] || { echo "Roblox universe creator ID is not numeric"; exit 1; }
+          echo "Resolved Roblox universe creator metadata: type=$creator_type id=$creator_id"
 
           jq -en --argjson id "$creator_id" '$id > 0' >/dev/null || {
             echo "Roblox universe creator ID must be positive"
