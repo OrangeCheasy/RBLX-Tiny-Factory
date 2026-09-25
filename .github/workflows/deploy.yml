@@ -67,31 +67,63 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Check whether the map is already imported
+      - name: Check personal island import state
         id: state
         shell: bash
         run: |
           set -euo pipefail
-          if test -s src/maps/PersonalIsland.glb && grep -Eq 'AssetId = [1-9][0-9]*' src/shared/PersonalIslandAssetId.luau; then
+          map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
+          if test -s "$map_path"; then
+            echo "map_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "map_present=false" >> "$GITHUB_OUTPUT"
+          fi
+          if test -s "$map_path" && grep -Eq 'AssetId = [1-9][0-9]*' src/shared/PersonalIslandAssetId.luau; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Download exact Higgsfield GLB
-        if: steps.state.outputs.ready != 'true'
+        if: steps.state.outputs.map_present != 'true'
         shell: bash
         run: |
           set -euo pipefail
           source_url=$(jq -r '.downloadUrl' docs/assets/personal-island-source.json)
-          expected_bytes=$(jq -r '.expectedBytes' docs/assets/personal-island-source.json)
+          map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
+          mkdir -p "$(dirname "$map_path")"
           curl --fail --location --retry 3 --silent --show-error "$source_url" \
-            --output src/maps/PersonalIsland.glb
-          actual_bytes=$(stat -c '%s' src/maps/PersonalIsland.glb)
+            --output "$map_path"
+
+      - name: Verify personal island source
+        if: steps.state.outputs.ready != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_bytes=$(jq -r '.expectedBytes' docs/assets/personal-island-source.json)
+          map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
+          actual_bytes=$(stat -c '%s' "$map_path")
           test "$actual_bytes" = "$expected_bytes" || {
             echo "Unexpected personal island size: $actual_bytes (expected $expected_bytes)"
             exit 1
           }
+          sha256sum "$map_path"
+
+      - name: Commit source GLB to main
+        if: steps.state.outputs.map_present != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
+          git add "$map_path"
+          if git diff --cached --quiet; then
+            echo "Personal island source already committed"
+          else
+            git commit -m "feat: add personal island source map"
+            git push origin HEAD:main
+          fi
 
       - name: Upload GLB to Roblox Assets API
         if: steps.state.outputs.ready != 'true'
@@ -101,6 +133,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          map_path=$(jq -r '.repositoryPath' docs/assets/personal-island-source.json)
           test -n "$ROBLOX_API_KEY" || { echo "ROBLOX_API_KEY secret is missing"; exit 1; }
           test -n "$ROBLOX_UNIVERSE_ID" || { echo "ROBLOX_UNIVERSE_ID secret is missing"; exit 1; }
 
@@ -121,17 +154,27 @@ jobs:
             '{assetType:"Model", displayName:"Tiny Factory - Personal Island", description:"Higgsfield Tiny Factory personal island, revision 26.", creationContext:{creator:($creator | fromjson)}}')
 
           upload_response_file=$(mktemp)
+          upload_headers_file=$(mktemp)
           upload_http_code=$(curl --silent --show-error \
+            --dump-header "$upload_headers_file" \
             --output "$upload_response_file" \
             --write-out "%{http_code}" \
             --request POST \
             --header "x-api-key: $ROBLOX_API_KEY" \
             --form "request=$request_json;type=application/json" \
-            --form "fileContent=@src/maps/PersonalIsland.glb;type=model/gltf-binary" \
+            --form "fileContent=@$map_path;type=model/gltf-binary" \
             "https://apis.roblox.com/assets/v1/assets")
           echo "Roblox asset upload HTTP $upload_http_code"
+          grep -Ei '^(HTTP/|content-type:|x-roblox|retry-after:)' "$upload_headers_file" | tr -d '\r' || true
+          response_bytes=$(wc -c < "$upload_response_file")
+          echo "Roblox response body bytes: $response_bytes"
           if [[ "$upload_http_code" -lt 200 || "$upload_http_code" -ge 300 ]]; then
-            cat "$upload_response_file"
+            if [[ "$response_bytes" -gt 0 ]]; then
+              base64 -w0 "$upload_response_file"
+              echo
+            else
+              echo "Roblox returned an empty response body."
+            fi
             exit 1
           fi
           operation=$(cat "$upload_response_file")
@@ -155,11 +198,12 @@ jobs:
             sleep 10
           done
           test -n "$asset_id" || { echo "Roblox asset operation did not finish"; exit 1; }
+          echo "Imported Roblox Model asset ID: $asset_id"
 
-          source_sha=$(sha256sum src/maps/PersonalIsland.glb | awk '{print $1}')
+          source_sha=$(sha256sum "$map_path" | awk '{print $1}')
           cat > src/shared/PersonalIslandAssetId.luau <<EOF
           --!strict
-          -- Generated by .github/workflows/import-personal-island.yml.
+          -- Generated by .github/workflows/deploy.yml.
           return {
           	AssetId = $asset_id,
           	SourceProjectId = "26b9c585-243d-4326-bb91-f48bcd5878fc",
@@ -173,17 +217,17 @@ jobs:
             --arg sha "$source_sha" \
             --arg source "$(jq -r '.downloadUrl' docs/assets/personal-island-source.json)" \
             '{assetId:$assetId|tonumber, sourceSha256:$sha, sourceUrl:$source, higgsfieldRevision:26}' \
-            > src/maps/PersonalIsland.roblox.json
+            > docs/assets/personal-island-roblox.json
 
-      - name: Commit imported map and Roblox asset metadata
+      - name: Commit Roblox asset metadata to main
         if: steps.state.outputs.ready != 'true'
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/maps/PersonalIsland.glb src/maps/PersonalIsland.roblox.json src/shared/PersonalIslandAssetId.luau
-          git commit -m "feat: import personal island map asset"
+          git add docs/assets/personal-island-roblox.json src/shared/PersonalIslandAssetId.luau
+          git commit -m "feat: record personal island Roblox asset"
           git push origin HEAD:main
 
   publish:
